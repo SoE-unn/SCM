@@ -1,4 +1,4 @@
-# SoE Character Launcher
+# SoE Character Manager
 
 A small Windows launcher for installing and managing WildLife character saves.
 
