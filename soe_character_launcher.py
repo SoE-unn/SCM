@@ -2,7 +2,9 @@ import shutil
 import sys
 import re
 import ctypes
+import traceback
 import tkinter as tk
+from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox
 
@@ -34,6 +36,8 @@ except AttributeError:
 
 # === caminhos principais ===
 SCRIPT_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+APP_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
+LOG_FILE = APP_DIR / "launcher_error.log"
 USER_HOME = Path.home()
 
 BASE_PATH = (
@@ -61,6 +65,67 @@ if CTK_AVAILABLE and DND_AVAILABLE and hasattr(TkinterDnD, "DnDWrapper"):
             self.TkdndVersion = TkinterDnD._require(self)
 else:
     CTkDnD = None
+
+
+def write_error_log_file(context, error_type=None, error=None, trace=None):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    lines = [
+        "",
+        f"[{timestamp}] {context}",
+    ]
+
+    if error_type and error:
+        lines.append("".join(traceback.format_exception(error_type, error, trace)).rstrip())
+
+    content = "\n".join(lines) + "\n"
+    fallback_log_file = Path.home() / "SoeCharacterLauncher_error.log"
+
+    for log_file in (LOG_FILE, fallback_log_file):
+        try:
+            with log_file.open("a", encoding="utf-8") as log:
+                log.write(content)
+            return log_file
+        except Exception:
+            continue
+
+    return LOG_FILE
+
+
+def show_startup_error_window(log_file):
+    try:
+        error_root = tk.Tk()
+        error_root.title("SCM")
+        error_root.geometry("560x190")
+        error_root.resizable(False, False)
+        error_root.configure(bg="#0f1117")
+
+        title = tk.Label(
+            error_root,
+            text="SCM could not finish loading.",
+            font=("Arial", 13, "bold"),
+            bg="#0f1117",
+            fg="#f4f4f5",
+        )
+        title.pack(pady=(24, 8))
+
+        details = tk.Label(
+            error_root,
+            text=f"Details were saved to:\n{log_file}",
+            font=("Arial", 10),
+            bg="#0f1117",
+            fg="#a6adbb",
+            wraplength=500,
+            justify="center",
+        )
+        details.pack(pady=(0, 18))
+
+        close_button = tk.Button(error_root, text="Close", command=error_root.destroy)
+        close_button.pack()
+
+        error_root.mainloop()
+    except Exception:
+        pass
 
 
 class CharacterLauncher:
@@ -97,11 +162,12 @@ class CharacterLauncher:
     def __init__(self):
         self.dnd_enabled = False
         self.root = self._create_root()
+        self.root.report_callback_exception = self.handle_callback_exception
 
         self.root.title("SCM")
         self.root.geometry("1415x800")
         self.root.resizable(False, False)
-        self.root.attributes("-toolwindow", False)
+        self.safe_set_window_attributes()
 
         self.selected = set()
         self.character_cards = {}
@@ -127,10 +193,50 @@ class CharacterLauncher:
         self._apply_window_icon()
         self._build_ui()
         self._setup_drag_and_drop()
+        self.safe_update_idletasks()
 
-        self.refresh_characters()
+        self._show_status_message("Loading characters...")
+        self.root.after(120, self.refresh_characters)
 
     # === inicializacao ===
+    def handle_callback_exception(self, error_type, error, trace):
+        log_file = self.write_error_log("Unhandled UI callback error", error_type, error, trace)
+
+        try:
+            messagebox.showerror(
+                "Error",
+                f"Something went wrong.\n\nDetails were saved to:\n{log_file}",
+            )
+        except Exception:
+            pass
+
+    def write_error_log(self, context, error_type=None, error=None, trace=None):
+        return write_error_log_file(context, error_type, error, trace)
+
+    def write_exception_log(self, context, error):
+        return self.write_error_log(context, type(error), error, error.__traceback__)
+
+    def safe_update_idletasks(self):
+        try:
+            self.root.update_idletasks()
+        except Exception:
+            pass
+
+    def safe_set_window_attributes(self):
+        try:
+            self.root.attributes("-toolwindow", False)
+        except Exception as error:
+            self.write_exception_log("Window attribute setup failed", error)
+
+    def show_logged_error(self, context, error, title="Error", message=None):
+        log_file = self.write_exception_log(context, error)
+        visible_message = message or str(error)
+
+        messagebox.showerror(
+            title,
+            f"{visible_message}\n\nDetails were saved to:\n{log_file}",
+        )
+
     def _create_root(self):
         if CTK_AVAILABLE and CTkDnD:
             self.dnd_enabled = True
@@ -355,7 +461,7 @@ class CharacterLauncher:
 
         self.btn_sort_alpha = ctk.CTkButton(
             self.top_frame,
-            text="A-Z ↑",
+            text="A-Z Up",
             command=self.set_alpha_sort,
             width=86,
             height=38,
@@ -542,7 +648,7 @@ class CharacterLauncher:
 
         self.btn_sort_alpha = tk.Button(
             self.top_frame,
-            text="A-Z ↑",
+            text="A-Z Up",
             command=self.set_alpha_sort,
             bd=0,
             bg="#2f80ed",
@@ -643,8 +749,12 @@ class CharacterLauncher:
         if not self.dnd_enabled:
             return
 
-        self.root.drop_target_register(DND_FILES)
-        self.root.dnd_bind("<<Drop>>", self.drop_files)
+        try:
+            self.root.drop_target_register(DND_FILES)
+            self.root.dnd_bind("<<Drop>>", self.drop_files)
+        except Exception as error:
+            self.dnd_enabled = False
+            self.write_exception_log("Drag and drop setup failed", error)
 
     def configure_grid_columns(self):
         column_width = self.PREVIEW_SIZE + (self.CARD_PAD_X * 2)
@@ -681,7 +791,7 @@ class CharacterLauncher:
             messagebox.showinfo("Success", f"{source.name} installed!")
 
         except Exception as error:
-            messagebox.showerror("Error", str(error))
+            self.show_logged_error("Manual install failed", error)
 
     def install_manual(self):
         file_path = filedialog.askopenfilename(
@@ -705,7 +815,13 @@ class CharacterLauncher:
         if not COLLECTIONS_PATH.exists():
             return characters
 
-        for json_file in sorted(COLLECTIONS_PATH.glob("*.json"), key=lambda item: item.stem.lower()):
+        json_files = [
+            file_path
+            for file_path in COLLECTIONS_PATH.iterdir()
+            if file_path.is_file() and file_path.suffix.casefold() == ".json"
+        ]
+
+        for json_file in sorted(json_files, key=lambda item: item.stem.casefold()):
             preview_file = json_file.with_suffix(".png")
 
             characters.append(
@@ -742,16 +858,23 @@ class CharacterLauncher:
         return names
 
     def refresh_characters(self):
-        self.cancel_pending_render_jobs()
-        self.all_characters = self.list_characters()
-        current_names = {character["name"] for character in self.all_characters}
+        try:
+            self.cancel_pending_render_jobs()
+            self.all_characters = self.list_characters()
+            current_names = {character["name"] for character in self.all_characters}
 
-        for name in list(self.character_cards):
-            if name not in current_names:
-                self.character_cards[name]["frame"].destroy()
-                del self.character_cards[name]
+            for name in list(self.character_cards):
+                if name not in current_names:
+                    self.safe_destroy_widget(self.character_cards[name].get("frame"))
+                    del self.character_cards[name]
 
-        self.render_characters()
+            self.render_characters()
+        except Exception as error:
+            self.show_logged_error(
+                "Refresh characters failed",
+                error,
+                message="Refresh failed.",
+            )
 
     def render_characters(self):
         self.cancel_pending_render_jobs()
@@ -762,18 +885,18 @@ class CharacterLauncher:
         self.preview_queue.clear()
 
         characters = list(self.all_characters)
-        filter_text = self.search_var.get().strip().lower()
+        filter_text = self.search_var.get().strip().casefold()
 
         if filter_text:
             characters = [
                 character
                 for character in characters
-                if filter_text in character["name"].lower()
+                if filter_text in character["name"].casefold()
             ]
 
         if not characters:
             for card in self.character_cards.values():
-                card["frame"].grid_forget()
+                self.safe_grid_forget(card.get("frame"))
 
             self._show_empty_message(filter_text)
             return
@@ -783,7 +906,7 @@ class CharacterLauncher:
 
         for name, card in self.character_cards.items():
             if name not in visible_names:
-                card["frame"].grid_forget()
+                self.safe_grid_forget(card.get("frame"))
 
         initial_count = min(len(characters), self.INITIAL_RENDER_COUNT)
         self.render_character_batch(characters, 0, initial_count, render_token)
@@ -802,31 +925,63 @@ class CharacterLauncher:
 
     def cancel_pending_render_jobs(self):
         if self.card_render_after_id:
-            self.root.after_cancel(self.card_render_after_id)
+            self.safe_after_cancel(self.card_render_after_id)
             self.card_render_after_id = None
 
         if self.preview_load_after_id:
-            self.root.after_cancel(self.preview_load_after_id)
+            self.safe_after_cancel(self.preview_load_after_id)
             self.preview_load_after_id = None
+
+    def safe_after_cancel(self, after_id):
+        try:
+            self.root.after_cancel(after_id)
+        except tk.TclError:
+            pass
+        except Exception as error:
+            self.write_exception_log("Failed to cancel scheduled UI job", error)
+
+    def safe_grid_forget(self, widget):
+        try:
+            if self.widget_exists(widget):
+                widget.grid_forget()
+        except Exception:
+            pass
+
+    def safe_destroy_widget(self, widget):
+        try:
+            if self.widget_exists(widget):
+                widget.destroy()
+        except Exception:
+            pass
+
+    def widget_exists(self, widget):
+        try:
+            return bool(widget and widget.winfo_exists())
+        except Exception:
+            return False
 
     def render_remaining_character_batches(self, characters, start_index, render_token):
         if render_token != self.current_render_token:
             return
 
-        end_index = min(start_index + self.CARD_RENDER_BATCH, len(characters))
-        self.render_character_batch(characters, start_index, end_index, render_token)
+        try:
+            end_index = min(start_index + self.CARD_RENDER_BATCH, len(characters))
+            self.render_character_batch(characters, start_index, end_index, render_token)
 
-        if end_index < len(characters):
-            self.card_render_after_id = self.root.after(
-                self.CARD_RENDER_DELAY,
-                lambda: self.render_remaining_character_batches(
-                    characters,
-                    end_index,
-                    render_token,
-                ),
-            )
-        else:
+            if end_index < len(characters):
+                self.card_render_after_id = self.root.after(
+                    self.CARD_RENDER_DELAY,
+                    lambda: self.render_remaining_character_batches(
+                        characters,
+                        end_index,
+                        render_token,
+                    ),
+                )
+            else:
+                self.card_render_after_id = None
+        except Exception as error:
             self.card_render_after_id = None
+            self.write_exception_log("Character card batch render failed", error)
 
     def render_character_batch(self, characters, start_index, end_index, render_token):
         if render_token != self.current_render_token:
@@ -839,9 +994,7 @@ class CharacterLauncher:
             self._show_character_card(character, row, column)
 
     def _hide_empty_message(self):
-        if self.empty_message and self.empty_message.winfo_exists():
-            self.empty_message.destroy()
-
+        self.safe_destroy_widget(self.empty_message)
         self.empty_message = None
 
     def _show_character_card(self, character, row, column):
@@ -852,7 +1005,20 @@ class CharacterLauncher:
             self._create_character_card(character, row, column)
             return
 
-        card["frame"].grid(row=row, column=column, padx=self.CARD_PAD_X, pady=self.CARD_PAD_Y, sticky="n")
+        if card.get("preview") != character["preview"]:
+            self.safe_destroy_widget(card.get("frame"))
+            self.character_cards.pop(name, None)
+            self._create_character_card(character, row, column)
+            return
+
+        frame = card.get("frame")
+
+        if not self.widget_exists(frame):
+            self.character_cards.pop(name, None)
+            self._create_character_card(character, row, column)
+            return
+
+        frame.grid(row=row, column=column, padx=self.CARD_PAD_X, pady=self.CARD_PAD_Y, sticky="n")
         self._set_card_selected(name, name in self.selected)
         self.queue_preview_load(name)
 
@@ -886,21 +1052,25 @@ class CharacterLauncher:
 
         while self.preview_queue and loaded_count < self.PREVIEW_LOAD_BATCH:
             name = self.preview_queue.pop(0)
-            card = self.character_cards.get(name)
 
-            if not card or card["preview_loaded"] or not card["preview"]:
-                continue
+            try:
+                card = self.character_cards.get(name)
 
-            image_label = card.get("image_label")
+                if not card or card["preview_loaded"] or not card["preview"]:
+                    continue
 
-            if not image_label or not image_label.winfo_exists():
-                continue
+                image_label = card.get("image_label")
 
-            image = self._get_preview_image(card["preview"])
-            image_label.configure(image=image, text="")
-            image_label.image = image
-            card["preview_loaded"] = True
-            loaded_count += 1
+                if not self.widget_exists(image_label):
+                    continue
+
+                image = self._get_preview_image(card["preview"])
+                image_label.configure(image=image, text="")
+                image_label.image = image
+                card["preview_loaded"] = True
+                loaded_count += 1
+            except Exception as error:
+                self.write_exception_log(f"Preview load failed for {name}", error)
 
         if self.preview_queue:
             self.schedule_preview_loading()
@@ -927,9 +1097,9 @@ class CharacterLauncher:
         self.render_characters()
 
     def update_sort_buttons(self):
-        arrow = "↓" if self.sort_reverse else "↑"
-        alpha_text = f"A-Z {arrow}" if self.sort_mode == "alpha" else "A-Z"
-        number_text = f"0-9 {arrow}" if self.sort_mode == "number" else "0-9"
+        direction = "Down" if self.sort_reverse else "Up"
+        alpha_text = f"A-Z {direction}" if self.sort_mode == "alpha" else "A-Z"
+        number_text = f"0-9 {direction}" if self.sort_mode == "number" else "0-9"
 
         self.btn_sort_alpha.configure(text=alpha_text)
         self.btn_sort_number.configure(text=number_text)
@@ -967,10 +1137,10 @@ class CharacterLauncher:
                     numbered.append((number, character))
 
             numbered.sort(
-                key=lambda item: (item[0], item[1]["name"].lower()),
+                key=lambda item: (item[0], item[1]["name"].casefold()),
                 reverse=self.sort_reverse,
             )
-            without_number.sort(key=lambda character: character["name"].lower())
+            without_number.sort(key=lambda character: character["name"].casefold())
 
             return [character for _number, character in numbered] + without_number
 
@@ -981,12 +1151,11 @@ class CharacterLauncher:
         )
 
     def get_alpha_sort_key(self, name):
-        match = re.search(r"[A-Za-zÀ-ÖØ-öø-ÿ]", name)
+        for index, character in enumerate(name):
+            if character.isalpha():
+                return name[index:].casefold()
 
-        if not match:
-            return name.lower()
-
-        return name[match.start():].lower()
+        return name.casefold()
 
     def get_first_number(self, name):
         match = re.search(r"\d+", name)
@@ -1000,6 +1169,11 @@ class CharacterLauncher:
         else:
             text = "No character found."
 
+        self._show_status_message(text)
+
+    def _show_status_message(self, text):
+        self._hide_empty_message()
+
         if CTK_AVAILABLE:
             label = ctk.CTkLabel(
                 self.grid_frame,
@@ -1010,7 +1184,7 @@ class CharacterLauncher:
         else:
             label = tk.Label(self.grid_frame, text=text, font=("Arial", 10))
 
-        label.grid(row=0, column=0, padx=20, pady=20)
+        label.grid(row=0, column=0, columnspan=self.GRID_COLUMNS, padx=20, pady=20)
         self.empty_message = label
 
     def _create_character_card(self, character, row, column, parent_frame=None):
@@ -1317,6 +1491,10 @@ class CharacterLauncher:
             return
 
         image_frame = card["image_frame"]
+
+        if not self.widget_exists(image_frame):
+            return
+
         if CTK_AVAILABLE:
             image_frame.configure(
                 border_width=2 if is_selected else 1,
@@ -1353,7 +1531,7 @@ class CharacterLauncher:
 
     def _on_search_change(self, *_args):
         if self.search_after_id:
-            self.root.after_cancel(self.search_after_id)
+            self.safe_after_cancel(self.search_after_id)
 
         self.search_after_id = self.root.after(120, self.apply_search)
 
@@ -1442,7 +1620,7 @@ class CharacterLauncher:
             self.refresh_characters()
 
         except Exception as error:
-            messagebox.showerror("Error", str(error))
+            self.show_logged_error("Delete character failed", error)
 
     def delete_selected_characters(self):
         if not self.selected:
@@ -1469,7 +1647,7 @@ class CharacterLauncher:
             self.refresh_characters()
 
         except Exception as error:
-            messagebox.showerror("Error", str(error))
+            self.show_logged_error("Delete selected characters failed", error)
 
     # === CustomAssets cleanup ===
     def cleanup_orphans(self):
@@ -1519,7 +1697,7 @@ class CharacterLauncher:
             )
 
         except Exception as error:
-            messagebox.showerror("Error", str(error))
+            self.show_logged_error("Clear Custom Assets failed", error)
 
     # === scroll ===
     def _on_mousewheel(self, event):
@@ -1530,5 +1708,9 @@ class CharacterLauncher:
 
 
 if __name__ == "__main__":
-    app = CharacterLauncher()
-    app.run()
+    try:
+        app = CharacterLauncher()
+        app.run()
+    except Exception as error:
+        log_file = write_error_log_file("Fatal startup error", type(error), error, error.__traceback__)
+        show_startup_error_window(log_file)
