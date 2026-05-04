@@ -2,6 +2,7 @@ import shutil
 import sys
 import re
 import ctypes
+import json
 import traceback
 import tkinter as tk
 from datetime import datetime
@@ -39,8 +40,10 @@ SCRIPT_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 APP_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 LOG_FILE = APP_DIR / "launcher_error.log"
 USER_HOME = Path.home()
+CONFIG_DIR = USER_HOME / "AppData" / "Local" / "SoeCharacterLauncher"
+CONFIG_FILE = CONFIG_DIR / "settings.json"
 
-BASE_PATH = (
+DEFAULT_BASE_PATH = (
     USER_HOME
     / "AppData"
     / "Local"
@@ -49,10 +52,42 @@ BASE_PATH = (
     / "SandboxSaveGames"
 )
 
-COLLECTIONS_PATH = BASE_PATH / "Collections"
-CUSTOMASSETS_PATH = BASE_PATH / "CustomAssets"
-AUTOIMPORT_PATH = BASE_PATH / "AutoImport"
 ICON_PATH = SCRIPT_DIR / "ICO"
+
+
+def load_saved_base_path():
+    try:
+        if CONFIG_FILE.exists():
+            with CONFIG_FILE.open("r", encoding="utf-8") as config_file:
+                config = json.load(config_file)
+
+            save_folder = config.get("save_folder")
+
+            if save_folder:
+                return Path(save_folder)
+    except Exception:
+        pass
+
+    return DEFAULT_BASE_PATH
+
+
+def save_base_path(base_path):
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+    with CONFIG_FILE.open("w", encoding="utf-8") as config_file:
+        json.dump({"save_folder": str(base_path)}, config_file, indent=2)
+
+
+def apply_base_path(base_path):
+    global BASE_PATH, COLLECTIONS_PATH, CUSTOMASSETS_PATH, AUTOIMPORT_PATH
+
+    BASE_PATH = Path(base_path)
+    COLLECTIONS_PATH = BASE_PATH / "Collections"
+    CUSTOMASSETS_PATH = BASE_PATH / "CustomAssets"
+    AUTOIMPORT_PATH = BASE_PATH / "AutoImport"
+
+
+apply_base_path(load_saved_base_path())
 
 if CTK_AVAILABLE:
     ctk.set_appearance_mode("dark")
@@ -237,6 +272,82 @@ class CharacterLauncher:
             f"{visible_message}\n\nDetails were saved to:\n{log_file}",
         )
 
+    def save_folder_exists(self):
+        return BASE_PATH.exists() and BASE_PATH.is_dir()
+
+    def normalize_save_folder(self, folder_path):
+        folder = Path(folder_path)
+
+        if folder.name.casefold() in {"collections", "customassets", "autoimport"}:
+            folder = folder.parent
+
+        sandbox_child = folder / "SandboxSaveGames"
+
+        if sandbox_child.exists() and sandbox_child.is_dir():
+            folder = sandbox_child
+
+        return folder
+
+    def is_valid_save_folder(self, folder_path):
+        folder = Path(folder_path)
+
+        if not folder.exists() or not folder.is_dir():
+            return False
+
+        if folder.name.casefold() == "sandboxsavegames":
+            return True
+
+        expected_folders = ("Collections", "CustomAssets", "AutoImport")
+        return any((folder / name).exists() for name in expected_folders)
+
+    def choose_save_folder(self):
+        initial_dir = BASE_PATH if self.save_folder_exists() else DEFAULT_BASE_PATH.parent
+
+        if not initial_dir.exists():
+            initial_dir = USER_HOME
+
+        folder_path = filedialog.askdirectory(
+            title="Select your SandboxSaveGames folder",
+            initialdir=str(initial_dir),
+        )
+
+        if not folder_path:
+            return
+
+        selected_folder = self.normalize_save_folder(folder_path)
+
+        if not self.is_valid_save_folder(selected_folder):
+            messagebox.showwarning(
+                "Save folder not found",
+                (
+                    "Please select the SandboxSaveGames folder from your save.\n\n"
+                    "Example:\n"
+                    "E:\\Games\\Wildlife\\Saved\\SandboxSaveGames"
+                ),
+            )
+            return
+
+        try:
+            apply_base_path(selected_folder)
+            save_base_path(BASE_PATH)
+            self.image_cache.clear()
+            self.selected.clear()
+            self.scroll_to_top()
+            self.refresh_characters()
+            messagebox.showinfo("Save folder updated", f"Save folder set to:\n{BASE_PATH}")
+        except Exception as error:
+            self.show_logged_error("Save folder update failed", error)
+
+    def ensure_save_folder_available(self):
+        if self.save_folder_exists():
+            return True
+
+        messagebox.showwarning(
+            "Save folder not found",
+            "Save folder not found. Please select the SandboxSaveGames folder from your save.",
+        )
+        return False
+
     def _create_root(self):
         if CTK_AVAILABLE and CTkDnD:
             self.dnd_enabled = True
@@ -373,7 +484,7 @@ class CharacterLauncher:
 
         self.title_label = ctk.CTkLabel(
             self.title_frame,
-            text="SoE Characters Manager",
+            text="SoE Character Manager",
             font=("Arial", 22, "bold"),
             text_color=self.TEXT_COLOR,
             anchor="w",
@@ -430,6 +541,19 @@ class CharacterLauncher:
             text_color=self.TEXT_COLOR,
         )
         self.btn_cleanup_orphans.pack(side="left", padx=(8, 0))
+
+        self.btn_save_folder = ctk.CTkButton(
+            self.action_frame,
+            text="Save folder",
+            command=self.choose_save_folder,
+            width=130,
+            height=34,
+            corner_radius=8,
+            fg_color=self.BUTTON_COLOR,
+            hover_color=self.BUTTON_HOVER_COLOR,
+            text_color=self.TEXT_COLOR,
+        )
+        self.btn_save_folder.pack(side="left", padx=(8, 0))
 
         self.top_frame = ctk.CTkFrame(self.shell_frame, fg_color="transparent")
         self.top_frame.pack(fill="x", padx=18, pady=(0, 12))
@@ -623,6 +747,13 @@ class CharacterLauncher:
         )
         self.btn_cleanup_orphans.pack(side="left", padx=(8, 0))
 
+        self.btn_save_folder = tk.Button(
+            self.action_frame,
+            text="Save folder",
+            command=self.choose_save_folder,
+        )
+        self.btn_save_folder.pack(side="left", padx=(8, 0))
+
         self.top_frame = tk.Frame(self.root, bg=self.BG_COLOR)
         self.top_frame.pack(fill="x", padx=18, pady=(0, 12))
 
@@ -774,6 +905,9 @@ class CharacterLauncher:
         if source.suffix.lower() != ".wlsave":
             return
 
+        if not self.ensure_save_folder_available():
+            return
+
         if not source.exists():
             messagebox.showerror("Error", f"File not found:\n{source}")
             return
@@ -812,7 +946,7 @@ class CharacterLauncher:
     def list_characters(self):
         characters = []
 
-        if not COLLECTIONS_PATH.exists():
+        if not self.save_folder_exists() or not COLLECTIONS_PATH.exists():
             return characters
 
         json_files = [
@@ -836,7 +970,7 @@ class CharacterLauncher:
     def get_collection_names(self):
         names = set()
 
-        if not COLLECTIONS_PATH.exists():
+        if not self.save_folder_exists() or not COLLECTIONS_PATH.exists():
             return names
 
         for file_path in COLLECTIONS_PATH.iterdir():
@@ -848,7 +982,7 @@ class CharacterLauncher:
     def get_customasset_names(self):
         names = set()
 
-        if not CUSTOMASSETS_PATH.exists():
+        if not self.save_folder_exists() or not CUSTOMASSETS_PATH.exists():
             return names
 
         for folder_path in CUSTOMASSETS_PATH.iterdir():
@@ -1164,6 +1298,8 @@ class CharacterLauncher:
     def _show_empty_message(self, filter_text):
         if filter_text:
             text = "No character found for this search."
+        elif not self.save_folder_exists():
+            text = "Save folder not found. Please select the SandboxSaveGames folder from your save."
         elif not COLLECTIONS_PATH.exists():
             text = "The Collections folder does not exist yet."
         else:
@@ -1180,9 +1316,10 @@ class CharacterLauncher:
                 text=text,
                 font=("Arial", 12),
                 text_color=self.MUTED_TEXT_COLOR,
+                wraplength=640,
             )
         else:
-            label = tk.Label(self.grid_frame, text=text, font=("Arial", 10))
+            label = tk.Label(self.grid_frame, text=text, font=("Arial", 10), wraplength=640)
 
         label.grid(row=0, column=0, columnspan=self.GRID_COLUMNS, padx=20, pady=20)
         self.empty_message = label
@@ -1651,6 +1788,9 @@ class CharacterLauncher:
 
     # === CustomAssets cleanup ===
     def cleanup_orphans(self):
+        if not self.ensure_save_folder_available():
+            return
+
         collection_names = self.get_collection_names()
         asset_names = self.get_customasset_names()
 
