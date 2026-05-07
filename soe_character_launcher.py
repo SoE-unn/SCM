@@ -3,6 +3,7 @@ import sys
 import re
 import ctypes
 import json
+import os
 import traceback
 import tkinter as tk
 from datetime import datetime
@@ -173,6 +174,10 @@ class CharacterLauncher:
     DELETE_ICON_MARGIN_X = 6
     DELETE_ICON_MARGIN_Y = 6
     DELETE_ICON_HITBOX = 32
+    OPEN_FOLDER_ICON_SIZE = 24
+    OPEN_FOLDER_ICON_MARGIN_X = 6
+    OPEN_FOLDER_ICON_MARGIN_Y = 6
+    OPEN_FOLDER_ICON_HITBOX = 32
     INITIAL_RENDER_COUNT = 28
     CARD_RENDER_BATCH = 21
     PREVIEW_LOAD_BATCH = 5
@@ -218,6 +223,9 @@ class CharacterLauncher:
         self.image_cache = {}
         self.delete_icon = None
         self.delete_icon_pil = None
+        self.open_folder_icon = None
+        self.open_folder_icon_pil = None
+        self.no_image_icon_pil = None
         self.no_image_icon = None
         self.select_icon = None
         self.logo_image = None
@@ -374,11 +382,38 @@ class CharacterLauncher:
                 (self.DELETE_ICON_SIZE, self.DELETE_ICON_SIZE),
             )
 
+        self.open_folder_icon_pil = self._load_icon_pil(
+            "open-folder.png",
+            (self.OPEN_FOLDER_ICON_SIZE, self.OPEN_FOLDER_ICON_SIZE),
+        )
+
+        if self.open_folder_icon_pil:
+            self.open_folder_icon = self._make_ui_image(
+                self.open_folder_icon_pil.copy(),
+                (self.OPEN_FOLDER_ICON_SIZE, self.OPEN_FOLDER_ICON_SIZE),
+            )
+
         self.logo_image = self._load_icon("logo.ico", (64, 64))
-        self.no_image_icon = self._load_first_available_icon(
+        self.no_image_icon_pil = self._load_first_available_icon_pil(
             ("No_image.png", "No_image.jpg", "No_image.jpeg", "No_image_ICO.png"),
             (self.PREVIEW_SIZE, self.PREVIEW_SIZE),
         )
+
+        if self.no_image_icon_pil:
+            no_image = self._draw_action_icons_on_preview(self.no_image_icon_pil.copy())
+            self.no_image_icon = self._make_ui_image(
+                no_image,
+                (self.PREVIEW_SIZE, self.PREVIEW_SIZE),
+            )
+
+    def _load_first_available_icon_pil(self, filenames, size):
+        for filename in filenames:
+            icon = self._load_icon_pil(filename, size)
+
+            if icon:
+                return icon
+
+        return None
 
     def _load_first_available_icon(self, filenames, size):
         for filename in filenames:
@@ -1447,7 +1482,11 @@ class CharacterLauncher:
                 )
 
             image_label.pack(expand=True)
-            self._bind_selection(image_label, name)
+            if self.no_image_icon:
+                self._bind_preview_actions(image_label, name)
+            else:
+                self._bind_selection(image_label, name)
+
             self.character_cards[name]["image_label"] = image_label
             self.character_cards[name]["preview_loaded"] = True
 
@@ -1458,8 +1497,17 @@ class CharacterLauncher:
         if name in self.selected:
             self.character_cards[name]["overlay"] = self._add_selection_overlay(image_frame, name)
 
-        if not character["preview"] or not self.delete_icon_pil:
+        if not self.has_embedded_action_icon(character, self.delete_icon_pil):
             self._add_delete_button(image_frame, name)
+
+        if not self.has_embedded_action_icon(character, self.open_folder_icon_pil):
+            self._add_open_folder_button(image_frame, name)
+
+    def has_embedded_action_icon(self, character, icon):
+        if not icon:
+            return False
+
+        return bool(character["preview"] or self.no_image_icon)
 
     def _get_preview_image(self, preview_path):
         preview_path = Path(preview_path)
@@ -1471,7 +1519,7 @@ class CharacterLauncher:
             with Image.open(preview_path) as image:
                 image = image.convert("RGBA")
                 image = image.resize((self.PREVIEW_SIZE, self.PREVIEW_SIZE), RESAMPLE_FILTER)
-                image = self._draw_delete_icon_on_preview(image)
+                image = self._draw_action_icons_on_preview(image)
 
                 photo = self._make_ui_image(image.copy(), (self.PREVIEW_SIZE, self.PREVIEW_SIZE))
                 self.image_cache[preview_path] = photo
@@ -1479,13 +1527,27 @@ class CharacterLauncher:
 
         except Exception:
             image = Image.new("RGBA", (self.PREVIEW_SIZE, self.PREVIEW_SIZE), (242, 242, 242, 255))
-            image = self._draw_delete_icon_on_preview(image)
+            image = self._draw_action_icons_on_preview(image)
             photo = self._make_ui_image(
                 image,
                 (self.PREVIEW_SIZE, self.PREVIEW_SIZE),
             )
             self.image_cache[preview_path] = photo
             return photo
+
+    def _draw_action_icons_on_preview(self, image):
+        image = self._draw_open_folder_icon_on_preview(image)
+        image = self._draw_delete_icon_on_preview(image)
+        return image
+
+    def _draw_open_folder_icon_on_preview(self, image):
+        if not self.open_folder_icon_pil:
+            return image
+
+        x = self.OPEN_FOLDER_ICON_MARGIN_X
+        y = self.OPEN_FOLDER_ICON_MARGIN_Y
+        image.alpha_composite(self.open_folder_icon_pil, (x, y))
+        return image
 
     def _draw_delete_icon_on_preview(self, image):
         if not self.delete_icon_pil:
@@ -1575,6 +1637,44 @@ class CharacterLauncher:
 
         button.place(x=self.PREVIEW_SIZE - 30, y=4)
 
+    def _add_open_folder_button(self, image_frame, name):
+        if CTK_AVAILABLE:
+            button = ctk.CTkButton(
+                image_frame,
+                text="" if self.open_folder_icon else "Open",
+                image=self.open_folder_icon,
+                command=lambda character_name=name: self.open_custom_assets_folder(character_name),
+                width=26,
+                height=26,
+                corner_radius=7,
+                fg_color="transparent",
+                hover_color="#dddddd",
+                text_color=self.TEXT_COLOR,
+            )
+        elif self.open_folder_icon:
+            button = tk.Button(
+                image_frame,
+                image=self.open_folder_icon,
+                command=lambda character_name=name: self.open_custom_assets_folder(character_name),
+                bd=0,
+                bg="#f2f2f2",
+                activebackground="#dddddd",
+            )
+        else:
+            button = tk.Button(
+                image_frame,
+                text="Open",
+                command=lambda character_name=name: self.open_custom_assets_folder(character_name),
+                bd=0,
+                bg="#2b2b2b",
+                fg="white",
+                activebackground="#444444",
+                activeforeground="white",
+                width=5,
+            )
+
+        button.place(x=4, y=4)
+
     # === selecao ===
     def _bind_selection(self, widget, name):
         widget.bind("<Button-1>", lambda event, character_name=name: self.toggle_selection(character_name))
@@ -1585,14 +1685,30 @@ class CharacterLauncher:
         widget.bind("<Double-Button-1>", lambda event: "break")
 
     def handle_preview_click(self, event, name):
-        if self.is_delete_icon_click(event.x, event.y):
+        if self.is_open_folder_icon_click(event.x, event.y):
+            self.open_custom_assets_folder(name)
+        elif self.is_delete_icon_click(event.x, event.y):
             self.delete_character(name)
         else:
             self.toggle_selection(name)
 
         return "break"
 
+    def is_open_folder_icon_click(self, x, y):
+        if not self.open_folder_icon_pil:
+            return False
+
+        left = self.OPEN_FOLDER_ICON_MARGIN_X
+        right = self.OPEN_FOLDER_ICON_MARGIN_X + self.OPEN_FOLDER_ICON_HITBOX
+        top = self.OPEN_FOLDER_ICON_MARGIN_Y
+        bottom = self.OPEN_FOLDER_ICON_MARGIN_Y + self.OPEN_FOLDER_ICON_HITBOX
+
+        return left <= x <= right and top <= y <= bottom
+
     def is_delete_icon_click(self, x, y):
+        if not self.delete_icon_pil:
+            return False
+
         left = self.PREVIEW_SIZE - self.DELETE_ICON_HITBOX - self.DELETE_ICON_MARGIN_X
         right = self.PREVIEW_SIZE - self.DELETE_ICON_MARGIN_X
         top = self.DELETE_ICON_MARGIN_Y
@@ -1686,6 +1802,28 @@ class CharacterLauncher:
                 pass
         else:
             self.canvas.yview_moveto(0)
+
+    # === abrir pasta ===
+    def open_custom_assets_folder(self, name):
+        if not self.ensure_save_folder_available():
+            return
+
+        assets_folder = CUSTOMASSETS_PATH / name
+
+        if not assets_folder.exists() or not assets_folder.is_dir():
+            messagebox.showwarning(
+                "Folder not found",
+                f"CustomAssets folder not found for '{name}'.\n\n{assets_folder}",
+            )
+            return
+
+        try:
+            if sys.platform != "win32":
+                raise RuntimeError("Opening folders is only available on Windows.")
+
+            os.startfile(str(assets_folder))
+        except Exception as error:
+            self.show_logged_error("Open CustomAssets folder failed", error)
 
     # === delete ===
     def send_to_recycle_bin(self, path):
