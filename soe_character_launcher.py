@@ -5,9 +5,11 @@ import ctypes
 import json
 import os
 import traceback
+import zipfile
 import tkinter as tk
+import tkinter.font as tkfont
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from tkinter import filedialog, messagebox
 
 from PIL import Image, ImageTk
@@ -37,12 +39,14 @@ except AttributeError:
 
 
 # === caminhos principais ===
+APP_NAME = "WildLife Prop Manager"
 SCRIPT_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 APP_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 LOG_FILE = APP_DIR / "launcher_error.log"
 USER_HOME = Path.home()
-CONFIG_DIR = USER_HOME / "AppData" / "Local" / "SoeCharacterLauncher"
+CONFIG_DIR = USER_HOME / "AppData" / "Local" / "WildLifePropManager"
 CONFIG_FILE = CONFIG_DIR / "settings.json"
+LEGACY_CONFIG_FILE = USER_HOME / "AppData" / "Local" / "SoeCharacterLauncher" / "settings.json"
 
 DEFAULT_BASE_PATH = (
     USER_HOME
@@ -57,17 +61,20 @@ ICON_PATH = SCRIPT_DIR / "ICO"
 
 
 def load_saved_base_path():
-    try:
-        if CONFIG_FILE.exists():
-            with CONFIG_FILE.open("r", encoding="utf-8") as config_file:
+    for config_path in (CONFIG_FILE, LEGACY_CONFIG_FILE):
+        try:
+            if not config_path.exists():
+                continue
+
+            with config_path.open("r", encoding="utf-8") as config_file:
                 config = json.load(config_file)
 
             save_folder = config.get("save_folder")
 
             if save_folder:
                 return Path(save_folder)
-    except Exception:
-        pass
+        except Exception:
+            continue
 
     return DEFAULT_BASE_PATH
 
@@ -115,7 +122,7 @@ def write_error_log_file(context, error_type=None, error=None, trace=None):
         lines.append("".join(traceback.format_exception(error_type, error, trace)).rstrip())
 
     content = "\n".join(lines) + "\n"
-    fallback_log_file = Path.home() / "SoeCharacterLauncher_error.log"
+    fallback_log_file = Path.home() / "WildLifePropManager_error.log"
 
     for log_file in (LOG_FILE, fallback_log_file):
         try:
@@ -131,17 +138,17 @@ def write_error_log_file(context, error_type=None, error=None, trace=None):
 def show_startup_error_window(log_file):
     try:
         error_root = tk.Tk()
-        error_root.title("SCM")
+        error_root.title(APP_NAME)
         error_root.geometry("560x190")
         error_root.resizable(False, False)
-        error_root.configure(bg="#0f1117")
+        error_root.configure(bg="#263F3F")
 
         title = tk.Label(
             error_root,
-            text="SCM could not finish loading.",
+            text=f"{APP_NAME} could not finish loading.",
             font=("Arial", 13, "bold"),
-            bg="#0f1117",
-            fg="#f4f4f5",
+            bg="#263F3F",
+            fg="#e8e8ea",
         )
         title.pack(pady=(24, 8))
 
@@ -149,8 +156,8 @@ def show_startup_error_window(log_file):
             error_root,
             text=f"Details were saved to:\n{log_file}",
             font=("Arial", 10),
-            bg="#0f1117",
-            fg="#a6adbb",
+            bg="#263F3F",
+            fg="#c8dccf",
             wraplength=500,
             justify="center",
         )
@@ -165,6 +172,8 @@ def show_startup_error_window(log_file):
 
 
 class CharacterLauncher:
+    WINDOW_WIDTH = 1415
+    WINDOW_HEIGHT = 800
     PREVIEW_SIZE = 150
     GRID_COLUMNS = 7
     CARD_PAD_X = 13
@@ -178,34 +187,38 @@ class CharacterLauncher:
     OPEN_FOLDER_ICON_MARGIN_X = 6
     OPEN_FOLDER_ICON_MARGIN_Y = 6
     OPEN_FOLDER_ICON_HITBOX = 32
+    NAME_SCROLL_STEP = 2
+    NAME_SCROLL_DELAY = 35
+    NAME_SCROLL_END_PAUSE = 700
+    NAME_SCROLL_RESET_PAUSE = 250
     INITIAL_RENDER_COUNT = 28
     CARD_RENDER_BATCH = 21
     PREVIEW_LOAD_BATCH = 5
     CARD_RENDER_DELAY = 10
     PREVIEW_LOAD_DELAY = 15
 
-    BG_COLOR = "#0f1117"
-    SURFACE_COLOR = "#171a21"
-    PANEL_COLOR = "#1f232d"
-    CARD_COLOR = "#20242e"
-    PREVIEW_BG = "#f2f2f2"
-    BORDER_COLOR = "#303642"
-    ACCENT_COLOR = "#2f80ed"
-    TEXT_COLOR = "#f4f4f5"
-    MUTED_TEXT_COLOR = "#a6adbb"
-    WARNING_COLOR = "#d39b3a"
-    BUTTON_COLOR = "#2b2f3a"
-    BUTTON_HOVER_COLOR = "#3a4050"
-    DANGER_COLOR = "#8f2d35"
-    DANGER_HOVER_COLOR = "#b33a45"
+    BG_COLOR = "#263F3F"
+    SURFACE_COLOR = "#263F3F"
+    PANEL_COLOR = "#004A4A"
+    CARD_COLOR = "#004A4A"
+    PREVIEW_BG = "#e6e6e6"
+    BORDER_COLOR = "#004A4A"
+    ACCENT_COLOR = "#004A4A"
+    TEXT_COLOR = "#e8e8ea"
+    MUTED_TEXT_COLOR = "#c8dccf"
+    WARNING_COLOR = "#b9822f"
+    BUTTON_COLOR = "#263F3F"
+    BUTTON_HOVER_COLOR = "#004A4A"
+    DANGER_COLOR = "#7a2630"
+    DANGER_HOVER_COLOR = "#96303a"
 
     def __init__(self):
         self.dnd_enabled = False
         self.root = self._create_root()
         self.root.report_callback_exception = self.handle_callback_exception
 
-        self.root.title("SCM")
-        self.root.geometry("1415x800")
+        self.root.title(APP_NAME)
+        self.center_window(self.WINDOW_WIDTH, self.WINDOW_HEIGHT)
         self.root.resizable(False, False)
         self.safe_set_window_attributes()
 
@@ -238,7 +251,7 @@ class CharacterLauncher:
         self._setup_drag_and_drop()
         self.safe_update_idletasks()
 
-        self._show_status_message("Loading characters...")
+        self._show_status_message("Loading props...")
         self.root.after(120, self.refresh_characters)
 
     # === inicializacao ===
@@ -264,6 +277,17 @@ class CharacterLauncher:
             self.root.update_idletasks()
         except Exception:
             pass
+
+    def center_window(self, width, height):
+        try:
+            screen_width = self.root.winfo_screenwidth()
+            screen_height = self.root.winfo_screenheight()
+            position_x = max(0, (screen_width - width) // 2)
+            position_y = max(0, (screen_height - height) // 2)
+            self.root.geometry(f"{width}x{height}+{position_x}+{position_y}")
+        except Exception as error:
+            self.write_exception_log("Window centering failed", error)
+            self.root.geometry(f"{width}x{height}")
 
     def safe_set_window_attributes(self):
         try:
@@ -519,7 +543,7 @@ class CharacterLauncher:
 
         self.title_label = ctk.CTkLabel(
             self.title_frame,
-            text="SoE Character Manager",
+            text=APP_NAME,
             font=("Arial", 22, "bold"),
             text_color=self.TEXT_COLOR,
             anchor="w",
@@ -546,19 +570,19 @@ class CharacterLauncher:
             height=34,
             corner_radius=8,
             fg_color=self.ACCENT_COLOR,
-            hover_color="#3f91ff",
+            hover_color=self.BUTTON_HOVER_COLOR,
             text_color=self.TEXT_COLOR,
         )
         self.btn_install.pack(side="left", padx=(0, 8))
 
         self.btn_refresh = ctk.CTkButton(
             self.action_frame,
-            text="Refresh characters",
+            text="Refresh props",
             command=self.refresh_characters,
             width=170,
             height=34,
             corner_radius=8,
-            fg_color=self.BUTTON_COLOR,
+            fg_color=self.ACCENT_COLOR,
             hover_color=self.BUTTON_HOVER_COLOR,
             text_color=self.TEXT_COLOR,
         )
@@ -571,7 +595,7 @@ class CharacterLauncher:
             width=170,
             height=34,
             corner_radius=8,
-            fg_color=self.BUTTON_COLOR,
+            fg_color=self.ACCENT_COLOR,
             hover_color=self.BUTTON_HOVER_COLOR,
             text_color=self.TEXT_COLOR,
         )
@@ -584,7 +608,7 @@ class CharacterLauncher:
             width=130,
             height=34,
             corner_radius=8,
-            fg_color=self.BUTTON_COLOR,
+            fg_color=self.ACCENT_COLOR,
             hover_color=self.BUTTON_HOVER_COLOR,
             text_color=self.TEXT_COLOR,
         )
@@ -598,7 +622,7 @@ class CharacterLauncher:
             textvariable=self.search_var,
             width=340,
             height=38,
-            placeholder_text="Search character",
+            placeholder_text="Search prop",
             fg_color=self.PANEL_COLOR,
             border_color=self.BORDER_COLOR,
             text_color=self.TEXT_COLOR,
@@ -626,7 +650,7 @@ class CharacterLauncher:
             height=38,
             corner_radius=8,
             fg_color=self.ACCENT_COLOR,
-            hover_color="#3f91ff",
+            hover_color=self.BUTTON_HOVER_COLOR,
             text_color=self.TEXT_COLOR,
         )
         self.btn_sort_alpha.pack(side="left", padx=(0, 8), pady=5)
@@ -667,7 +691,7 @@ class CharacterLauncher:
             width=130,
             height=38,
             corner_radius=8,
-            fg_color=self.BUTTON_COLOR,
+            fg_color=self.ACCENT_COLOR,
             hover_color=self.BUTTON_HOVER_COLOR,
             text_color=self.TEXT_COLOR,
         )
@@ -714,23 +738,23 @@ class CharacterLauncher:
             self.header_frame,
             width=78,
             height=78,
-            bg="#1f232d",
+            bg=self.PANEL_COLOR,
             highlightthickness=1,
-            highlightbackground="#303642",
+            highlightbackground=self.BORDER_COLOR,
         )
         self.logo_frame.pack(side="left", padx=(0, 14))
         self.logo_frame.pack_propagate(False)
 
         if self.logo_image:
-            logo_label = tk.Label(self.logo_frame, image=self.logo_image, bg="#1f232d")
+            logo_label = tk.Label(self.logo_frame, image=self.logo_image, bg=self.PANEL_COLOR)
             logo_label.image = self.logo_image
         else:
             logo_label = tk.Label(
                 self.logo_frame,
                 text="LOGO",
                 font=("Arial", 10, "bold"),
-                bg="#1f232d",
-                fg="#a6adbb",
+                bg=self.PANEL_COLOR,
+                fg=self.MUTED_TEXT_COLOR,
             )
 
         logo_label.pack(expand=True)
@@ -740,7 +764,7 @@ class CharacterLauncher:
 
         self.title_label = tk.Label(
             self.title_frame,
-            text="Soe Character Launcher",
+            text=APP_NAME,
             font=("Arial", 16, "bold"),
             bg=self.BG_COLOR,
             fg="white",
@@ -753,7 +777,7 @@ class CharacterLauncher:
             text="drag and drop the .Wlsave file" if DND_AVAILABLE else "Select a .wlsave",
             font=("Arial", 11),
             bg=self.BG_COLOR,
-            fg="#a6adbb",
+            fg=self.MUTED_TEXT_COLOR,
             anchor="w",
         )
         self.label.pack(anchor="w", pady=(2, 0))
@@ -765,13 +789,21 @@ class CharacterLauncher:
             self.action_frame,
             text="Manual install",
             command=self.install_manual,
+            bg=self.ACCENT_COLOR,
+            fg="white",
+            activebackground=self.BUTTON_HOVER_COLOR,
+            activeforeground="white",
         )
         self.btn_install.pack(side="left", padx=(0, 8))
 
         self.btn_refresh = tk.Button(
             self.action_frame,
-            text="Refresh characters",
+            text="Refresh props",
             command=self.refresh_characters,
+            bg=self.ACCENT_COLOR,
+            fg="white",
+            activebackground=self.BUTTON_HOVER_COLOR,
+            activeforeground="white",
         )
         self.btn_refresh.pack(side="left")
 
@@ -779,6 +811,10 @@ class CharacterLauncher:
             self.action_frame,
             text="Clear Custom Assets",
             command=self.cleanup_orphans,
+            bg=self.ACCENT_COLOR,
+            fg="white",
+            activebackground=self.BUTTON_HOVER_COLOR,
+            activeforeground="white",
         )
         self.btn_cleanup_orphans.pack(side="left", padx=(8, 0))
 
@@ -786,6 +822,10 @@ class CharacterLauncher:
             self.action_frame,
             text="Save folder",
             command=self.choose_save_folder,
+            bg=self.ACCENT_COLOR,
+            fg="white",
+            activebackground=self.BUTTON_HOVER_COLOR,
+            activeforeground="white",
         )
         self.btn_save_folder.pack(side="left", padx=(8, 0))
 
@@ -804,9 +844,9 @@ class CharacterLauncher:
             text="X",
             command=self.clear_search,
             bd=0,
-            bg="#2b2b2b",
+            bg=self.BUTTON_COLOR,
             fg="white",
-            activebackground="#444444",
+            activebackground=self.BUTTON_HOVER_COLOR,
             activeforeground="white",
             width=3,
         )
@@ -817,9 +857,9 @@ class CharacterLauncher:
             text="A-Z Up",
             command=self.set_alpha_sort,
             bd=0,
-            bg="#2f80ed",
+            bg=self.ACCENT_COLOR,
             fg="white",
-            activebackground="#3f91ff",
+            activebackground=self.BUTTON_HOVER_COLOR,
             activeforeground="white",
             width=8,
         )
@@ -830,9 +870,9 @@ class CharacterLauncher:
             text="0-9",
             command=self.set_number_sort,
             bd=0,
-            bg="#2b2b2b",
+            bg=self.BUTTON_COLOR,
             fg="white",
-            activebackground="#444444",
+            activebackground=self.BUTTON_HOVER_COLOR,
             activeforeground="white",
             width=8,
         )
@@ -844,9 +884,9 @@ class CharacterLauncher:
             image=self.delete_icon,
             compound="left",
             font=("Arial", 10, "bold"),
-            bg="#2b2b2b",
+            bg=self.BUTTON_COLOR,
             fg="white",
-            activebackground="#444444",
+            activebackground=self.BUTTON_HOVER_COLOR,
             activeforeground="white",
             bd=0,
             padx=10,
@@ -860,9 +900,9 @@ class CharacterLauncher:
             text="Clear selection",
             command=self.clear_selection,
             bd=0,
-            bg="#2b2b2b",
+            bg=self.ACCENT_COLOR,
             fg="white",
-            activebackground="#444444",
+            activebackground=self.BUTTON_HOVER_COLOR,
             activeforeground="white",
             padx=10,
             pady=5,
@@ -873,7 +913,7 @@ class CharacterLauncher:
                 self.root,
                 text="tkinterdnd2 is not installed: drag and drop is disabled.",
                 font=("Arial", 9),
-                fg="#9a5b00",
+                fg=self.WARNING_COLOR,
             )
             warning.pack(pady=(0, 6))
 
@@ -934,6 +974,125 @@ class CharacterLauncher:
             )
 
     # === instalacao ===
+    def is_safe_archive_path(self, archive_path):
+        return (
+            archive_path.parts
+            and not archive_path.is_absolute()
+            and all(part not in {"", ".", ".."} for part in archive_path.parts)
+            and all(":" not in part for part in archive_path.parts)
+        )
+
+    def should_skip_archive_path(self, archive_path):
+        return not archive_path.parts or archive_path.parts[0].casefold() == "__macosx"
+
+    def get_archive_root_folder(self, archive_paths):
+        usable_paths = [
+            archive_path
+            for archive_path in archive_paths
+            if archive_path.parts and archive_path.parts[0].casefold() != "__macosx"
+        ]
+
+        if not usable_paths:
+            return None
+
+        root_names = {archive_path.parts[0] for archive_path in usable_paths}
+
+        if len(root_names) == 1 and all(len(archive_path.parts) > 1 for archive_path in usable_paths):
+            return next(iter(root_names))
+
+        return None
+
+    def get_relative_archive_path(self, archive_path, root_folder):
+        if root_folder and archive_path.parts and archive_path.parts[0] == root_folder:
+            parts = archive_path.parts[1:]
+
+            if not parts:
+                return None
+
+            return PurePosixPath(*parts)
+
+        return archive_path
+
+    def get_wlsave_destination(self, relative_path, install_name):
+        if not relative_path or not relative_path.parts:
+            return None
+
+        if len(relative_path.parts) == 1:
+            filename = relative_path.name
+            filename_lower = filename.casefold()
+
+            if filename_lower.endswith(".json") or filename_lower.endswith(".png"):
+                return COLLECTIONS_PATH / filename
+
+            return None
+
+        first_folder = relative_path.parts[0].casefold()
+
+        if first_folder in {"textures", "models", "media"}:
+            return CUSTOMASSETS_PATH / install_name / Path(*relative_path.parts)
+
+        return None
+
+    def copy_archive_member(self, archive, member, destination):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+
+        if destination.exists() and destination.is_dir():
+            raise RuntimeError(f"Cannot overwrite folder with file:\n{destination}")
+
+        with archive.open(member) as source_file:
+            with destination.open("wb") as destination_file:
+                shutil.copyfileobj(source_file, destination_file)
+
+    def extract_wlsave_directly(self, source):
+        install_name = source.stem
+        stats = {
+            "collections": 0,
+            "assets": 0,
+        }
+
+        COLLECTIONS_PATH.mkdir(parents=True, exist_ok=True)
+        CUSTOMASSETS_PATH.mkdir(parents=True, exist_ok=True)
+
+        with zipfile.ZipFile(source) as archive:
+            members = []
+            archive_paths = []
+
+            for member in archive.infolist():
+                if member.is_dir():
+                    continue
+
+                archive_path = PurePosixPath(member.filename.replace("\\", "/"))
+
+                if self.should_skip_archive_path(archive_path):
+                    continue
+
+                if not self.is_safe_archive_path(archive_path):
+                    raise RuntimeError(f"Unsafe file path inside package:\n{member.filename}")
+
+                members.append((member, archive_path))
+                archive_paths.append(archive_path)
+
+            root_folder = self.get_archive_root_folder(archive_paths)
+
+            for member, archive_path in members:
+                relative_path = self.get_relative_archive_path(archive_path, root_folder)
+                destination = self.get_wlsave_destination(relative_path, install_name)
+
+                if not destination:
+                    continue
+
+                self.copy_archive_member(archive, member, destination)
+
+                if destination.parent == COLLECTIONS_PATH:
+                    stats["collections"] += 1
+                else:
+                    stats["assets"] += 1
+
+        if not stats["collections"] and not stats["assets"]:
+            raise RuntimeError("No compatible prop files were found inside this .wlsave package.")
+
+        return stats
+
     def install_character_direct(self, file_path):
         source = Path(str(file_path).strip("{}"))
 
@@ -948,23 +1107,27 @@ class CharacterLauncher:
             return
 
         try:
-            AUTOIMPORT_PATH.mkdir(parents=True, exist_ok=True)
+            stats = self.extract_wlsave_directly(source)
+            self.image_cache.clear()
+            self.refresh_characters()
 
-            destination = AUTOIMPORT_PATH / source.name
+            messagebox.showinfo(
+                "Success",
+                (
+                    f"{source.stem} installed!\n\n"
+                    f"Collections files: {stats['collections']}\n"
+                    f"CustomAssets files: {stats['assets']}"
+                ),
+            )
 
-            if source.resolve() == destination.resolve():
-                messagebox.showinfo("Notice", f"{source.name} is already in the AutoImport folder.")
-                return
-
-            shutil.copy2(source, destination)
-            messagebox.showinfo("Success", f"{source.name} installed!")
-
+        except zipfile.BadZipFile:
+            messagebox.showerror("Error", "This .wlsave file could not be opened as a valid package.")
         except Exception as error:
-            self.show_logged_error("Manual install failed", error)
+            self.show_logged_error("Install failed", error)
 
     def install_manual(self):
         file_path = filedialog.askopenfilename(
-            title="Select character",
+            title="Select prop",
             filetypes=[("WildLife Save", "*.wlsave")],
         )
 
@@ -978,6 +1141,16 @@ class CharacterLauncher:
             self.install_character_direct(file_path)
 
     # === listagem ===
+    def is_hairfix_manifest(self, file_path):
+        return ".hairfix." in Path(file_path).name.casefold()
+
+    def is_character_json_file(self, file_path):
+        return (
+            file_path.is_file()
+            and file_path.suffix.casefold() == ".json"
+            and not self.is_hairfix_manifest(file_path)
+        )
+
     def list_characters(self):
         characters = []
 
@@ -987,7 +1160,7 @@ class CharacterLauncher:
         json_files = [
             file_path
             for file_path in COLLECTIONS_PATH.iterdir()
-            if file_path.is_file() and file_path.suffix.casefold() == ".json"
+            if self.is_character_json_file(file_path)
         ]
 
         for json_file in sorted(json_files, key=lambda item: item.stem.casefold()):
@@ -1009,7 +1182,10 @@ class CharacterLauncher:
             return names
 
         for file_path in COLLECTIONS_PATH.iterdir():
-            if file_path.is_file() and file_path.suffix.lower() in {".json", ".png"}:
+            if self.is_hairfix_manifest(file_path):
+                continue
+
+            if file_path.is_file() and file_path.suffix.casefold() in {".json", ".png"}:
                 names.add(file_path.stem)
 
         return names
@@ -1040,7 +1216,7 @@ class CharacterLauncher:
             self.render_characters()
         except Exception as error:
             self.show_logged_error(
-                "Refresh characters failed",
+                "Refresh props failed",
                 error,
                 message="Refresh failed.",
             )
@@ -1150,7 +1326,7 @@ class CharacterLauncher:
                 self.card_render_after_id = None
         except Exception as error:
             self.card_render_after_id = None
-            self.write_exception_log("Character card batch render failed", error)
+            self.write_exception_log("Prop card batch render failed", error)
 
     def render_character_batch(self, characters, start_index, end_index, render_token):
         if render_token != self.current_render_token:
@@ -1276,20 +1452,20 @@ class CharacterLauncher:
         if CTK_AVAILABLE:
             self.btn_sort_alpha.configure(
                 fg_color=self.ACCENT_COLOR if self.sort_mode == "alpha" else self.BUTTON_COLOR,
-                hover_color="#3f91ff" if self.sort_mode == "alpha" else self.BUTTON_HOVER_COLOR,
+                hover_color=self.BUTTON_HOVER_COLOR,
             )
             self.btn_sort_number.configure(
                 fg_color=self.ACCENT_COLOR if self.sort_mode == "number" else self.BUTTON_COLOR,
-                hover_color="#3f91ff" if self.sort_mode == "number" else self.BUTTON_HOVER_COLOR,
+                hover_color=self.BUTTON_HOVER_COLOR,
             )
         else:
             self.btn_sort_alpha.configure(
-                bg="#2f80ed" if self.sort_mode == "alpha" else "#2b2b2b",
-                activebackground="#3f91ff" if self.sort_mode == "alpha" else "#444444",
+                bg=self.ACCENT_COLOR if self.sort_mode == "alpha" else self.BUTTON_COLOR,
+                activebackground=self.BUTTON_HOVER_COLOR,
             )
             self.btn_sort_number.configure(
-                bg="#2f80ed" if self.sort_mode == "number" else "#2b2b2b",
-                activebackground="#3f91ff" if self.sort_mode == "number" else "#444444",
+                bg=self.ACCENT_COLOR if self.sort_mode == "number" else self.BUTTON_COLOR,
+                activebackground=self.BUTTON_HOVER_COLOR,
             )
 
     def sort_characters(self, characters):
@@ -1332,13 +1508,13 @@ class CharacterLauncher:
 
     def _show_empty_message(self, filter_text):
         if filter_text:
-            text = "No character found for this search."
+            text = "No prop found for this search."
         elif not self.save_folder_exists():
             text = "Save folder not found. Please select the SandboxSaveGames folder from your save."
         elif not COLLECTIONS_PATH.exists():
             text = "The Collections folder does not exist yet."
         else:
-            text = "No character found."
+            text = "No prop found."
 
         self._show_status_message(text)
 
@@ -1358,6 +1534,183 @@ class CharacterLauncher:
 
         label.grid(row=0, column=0, columnspan=self.GRID_COLUMNS, padx=20, pady=20)
         self.empty_message = label
+
+    def _create_name_area(self, parent, name):
+        label_width = self._measure_name_label_width(name)
+
+        if CTK_AVAILABLE:
+            name_frame = ctk.CTkFrame(
+                parent,
+                width=self.PREVIEW_SIZE,
+                height=self.CARD_NAME_HEIGHT,
+                fg_color="transparent",
+                corner_radius=0,
+            )
+            label_name = ctk.CTkLabel(
+                name_frame,
+                text=name,
+                font=("Arial", 12, "bold"),
+                width=label_width,
+                height=self.CARD_NAME_HEIGHT,
+                anchor="w",
+                justify="left",
+                text_color=self.TEXT_COLOR,
+                fg_color="transparent",
+            )
+        else:
+            name_frame = tk.Frame(
+                parent,
+                width=self.PREVIEW_SIZE,
+                height=self.CARD_NAME_HEIGHT,
+                bg=self.BG_COLOR,
+            )
+            label_name = tk.Label(
+                name_frame,
+                text=name,
+                font=("Arial", 8, "bold"),
+                anchor="w",
+                justify="left",
+                bg=self.BG_COLOR,
+                fg=self.TEXT_COLOR,
+            )
+
+        name_frame.pack()
+        name_frame.pack_propagate(False)
+
+        if CTK_AVAILABLE:
+            label_name.place(x=0, y=0)
+        else:
+            label_name.place(x=0, y=0, width=label_width, height=self.CARD_NAME_HEIGHT)
+
+        return name_frame, label_name
+
+    def _measure_name_label_width(self, name):
+        try:
+            font = tkfont.Font(family="Arial", size=12, weight="bold")
+            return max(self.PREVIEW_SIZE, font.measure(name) + 14)
+        except Exception:
+            return max(self.PREVIEW_SIZE, len(name) * 9 + 14)
+
+    def _get_name_text_width(self, label, name):
+        try:
+            label.update_idletasks()
+            width = label.winfo_reqwidth()
+
+            if width > 1:
+                return width
+        except Exception:
+            pass
+
+        try:
+            font = tkfont.Font(font=label.cget("font"))
+            return font.measure(name) + 12
+        except Exception:
+            return len(name) * 8
+
+    def _bind_name_events(self, widget, name):
+        self._bind_selection(widget, name)
+        widget.bind("<Enter>", lambda event, character_name=name: self.start_name_marquee(character_name))
+        widget.bind("<Leave>", lambda event, character_name=name: self.stop_name_marquee(character_name))
+
+    def start_name_marquee(self, name):
+        card = self.character_cards.get(name)
+
+        if not card:
+            return
+
+        label = card.get("name_label")
+
+        if not self.widget_exists(label):
+            return
+
+        text_width = card.get("name_text_width") or self._get_name_text_width(label, name)
+        card["name_text_width"] = text_width
+        max_offset = max(0, text_width - self.PREVIEW_SIZE + 8)
+
+        if max_offset <= 0:
+            return
+
+        self.stop_name_marquee(name, reset=False)
+        card["name_scroll_active"] = True
+        card["name_scroll_offset"] = 0
+        label.place_configure(x=0)
+        self.schedule_name_marquee(name, self.NAME_SCROLL_RESET_PAUSE)
+
+    def schedule_name_marquee(self, name, delay):
+        card = self.character_cards.get(name)
+
+        if not card or not card.get("name_scroll_active"):
+            return
+
+        card["name_scroll_after_id"] = self.root.after(
+            delay,
+            lambda character_name=name: self.animate_name_marquee(character_name),
+        )
+
+    def animate_name_marquee(self, name):
+        card = self.character_cards.get(name)
+
+        if not card or not card.get("name_scroll_active"):
+            return
+
+        label = card.get("name_label")
+
+        if not self.widget_exists(label):
+            return
+
+        text_width = card.get("name_text_width") or self._get_name_text_width(label, name)
+        max_offset = max(0, text_width - self.PREVIEW_SIZE + 8)
+
+        if max_offset <= 0:
+            self.stop_name_marquee(name)
+            return
+
+        offset = min(max_offset, card.get("name_scroll_offset", 0) + self.NAME_SCROLL_STEP)
+        card["name_scroll_offset"] = offset
+        label.place_configure(x=-offset)
+
+        if offset >= max_offset:
+            card["name_scroll_after_id"] = self.root.after(
+                self.NAME_SCROLL_END_PAUSE,
+                lambda character_name=name: self.reset_name_marquee(character_name),
+            )
+        else:
+            self.schedule_name_marquee(name, self.NAME_SCROLL_DELAY)
+
+    def reset_name_marquee(self, name):
+        card = self.character_cards.get(name)
+
+        if not card or not card.get("name_scroll_active"):
+            return
+
+        label = card.get("name_label")
+
+        if not self.widget_exists(label):
+            return
+
+        card["name_scroll_offset"] = 0
+        label.place_configure(x=0)
+        self.schedule_name_marquee(name, self.NAME_SCROLL_RESET_PAUSE)
+
+    def stop_name_marquee(self, name, reset=True):
+        card = self.character_cards.get(name)
+
+        if not card:
+            return
+
+        after_id = card.get("name_scroll_after_id")
+
+        if after_id:
+            self.safe_after_cancel(after_id)
+            card["name_scroll_after_id"] = None
+
+        card["name_scroll_active"] = False
+        card["name_scroll_offset"] = 0
+
+        label = card.get("name_label")
+
+        if reset and self.widget_exists(label):
+            label.place_configure(x=0)
 
     def _create_character_card(self, character, row, column, parent_frame=None):
         name = character["name"]
@@ -1382,31 +1735,7 @@ class CharacterLauncher:
         frame.grid(row=row, column=column, padx=self.CARD_PAD_X, pady=self.CARD_PAD_Y, sticky="n")
         frame.grid_propagate(False)
 
-        if CTK_AVAILABLE:
-            label_name = ctk.CTkLabel(
-                frame,
-                text=name,
-                font=("Arial", 12, "bold"),
-                width=self.PREVIEW_SIZE,
-                height=self.CARD_NAME_HEIGHT,
-                anchor="w",
-                justify="left",
-                text_color=self.TEXT_COLOR,
-                wraplength=self.PREVIEW_SIZE,
-            )
-        else:
-            label_name = tk.Label(
-                frame,
-                text=name,
-                font=("Arial", 8, "bold"),
-                width=20,
-                height=2,
-                anchor="w",
-                justify="left",
-                wraplength=self.PREVIEW_SIZE,
-            )
-
-        label_name.pack()
+        name_frame, label_name = self._create_name_area(frame, name)
 
         if CTK_AVAILABLE:
             image_frame = ctk.CTkFrame(
@@ -1423,9 +1752,9 @@ class CharacterLauncher:
                 frame,
                 width=self.PREVIEW_SIZE,
                 height=self.PREVIEW_SIZE,
-                bg="#f2f2f2",
+                bg=self.PREVIEW_BG,
                 highlightthickness=2 if name in self.selected else 1,
-                highlightbackground="#2f80ed" if name in self.selected else "#cccccc",
+                highlightbackground=self.ACCENT_COLOR if name in self.selected else "#b8b8b8",
             )
 
         image_frame.pack()
@@ -1437,6 +1766,12 @@ class CharacterLauncher:
             "preview": character["preview"],
             "preview_loaded": False,
             "image_label": None,
+            "name_frame": name_frame,
+            "name_label": label_name,
+            "name_text_width": None,
+            "name_scroll_after_id": None,
+            "name_scroll_active": False,
+            "name_scroll_offset": 0,
         }
 
         if character["preview"]:
@@ -1447,7 +1782,7 @@ class CharacterLauncher:
                     fg_color=self.PREVIEW_BG,
                 )
             else:
-                image_label = tk.Label(image_frame, text="", bg="#f2f2f2")
+                image_label = tk.Label(image_frame, text="", bg=self.PREVIEW_BG)
 
             image_label.pack(expand=True)
             self._bind_preview_actions(image_label, name)
@@ -1463,7 +1798,7 @@ class CharacterLauncher:
                         fg_color=self.PREVIEW_BG,
                     )
                 else:
-                    image_label = tk.Label(image_frame, image=self.no_image_icon, bg="#f2f2f2")
+                    image_label = tk.Label(image_frame, image=self.no_image_icon, bg=self.PREVIEW_BG)
 
                 image_label.image = self.no_image_icon
             elif CTK_AVAILABLE:
@@ -1471,14 +1806,14 @@ class CharacterLauncher:
                     image_frame,
                     text="No image",
                     fg_color=self.PREVIEW_BG,
-                    text_color="#666666",
+                    text_color="#555555",
                 )
             else:
                 image_label = tk.Label(
                     image_frame,
                     text="No image",
-                    bg="#f2f2f2",
-                    fg="#666666",
+                    bg=self.PREVIEW_BG,
+                    fg="#555555",
                 )
 
             image_label.pack(expand=True)
@@ -1492,7 +1827,8 @@ class CharacterLauncher:
 
         self._bind_selection(frame, name)
         self._bind_selection(image_frame, name)
-        self._bind_selection(label_name, name)
+        self._bind_name_events(name_frame, name)
+        self._bind_name_events(label_name, name)
 
         if name in self.selected:
             self.character_cards[name]["overlay"] = self._add_selection_overlay(image_frame, name)
@@ -1568,7 +1904,7 @@ class CharacterLauncher:
                     fg_color=self.PREVIEW_BG,
                 )
             else:
-                overlay = tk.Label(image_frame, image=self.select_icon, bd=0, bg="#f2f2f2")
+                overlay = tk.Label(image_frame, image=self.select_icon, bd=0, bg=self.PREVIEW_BG)
 
             overlay.image = self.select_icon
         else:
@@ -1588,7 +1924,7 @@ class CharacterLauncher:
                     image_frame,
                     text="Selected",
                     bd=0,
-                    bg="#2f80ed",
+                    bg=self.ACCENT_COLOR,
                     fg="white",
                     font=("Arial", 9, "bold"),
                     padx=8,
@@ -1610,7 +1946,7 @@ class CharacterLauncher:
                 height=26,
                 corner_radius=7,
                 fg_color="transparent",
-                hover_color="#dddddd",
+                hover_color="#cfcfcf",
                 text_color=self.TEXT_COLOR,
             )
         elif self.delete_icon:
@@ -1619,8 +1955,8 @@ class CharacterLauncher:
                 image=self.delete_icon,
                 command=lambda character_name=name: self.delete_character(character_name),
                 bd=0,
-                bg="#f2f2f2",
-                activebackground="#dddddd",
+                bg=self.PREVIEW_BG,
+                activebackground="#cfcfcf",
             )
         else:
             button = tk.Button(
@@ -1628,9 +1964,9 @@ class CharacterLauncher:
                 text="X",
                 command=lambda character_name=name: self.delete_character(character_name),
                 bd=0,
-                bg="#2b2b2b",
+                bg=self.BUTTON_COLOR,
                 fg="white",
-                activebackground="#444444",
+                activebackground=self.BUTTON_HOVER_COLOR,
                 activeforeground="white",
                 width=2,
             )
@@ -1648,7 +1984,7 @@ class CharacterLauncher:
                 height=26,
                 corner_radius=7,
                 fg_color="transparent",
-                hover_color="#dddddd",
+                hover_color="#cfcfcf",
                 text_color=self.TEXT_COLOR,
             )
         elif self.open_folder_icon:
@@ -1657,8 +1993,8 @@ class CharacterLauncher:
                 image=self.open_folder_icon,
                 command=lambda character_name=name: self.open_custom_assets_folder(character_name),
                 bd=0,
-                bg="#f2f2f2",
-                activebackground="#dddddd",
+                bg=self.PREVIEW_BG,
+                activebackground="#cfcfcf",
             )
         else:
             button = tk.Button(
@@ -1666,9 +2002,9 @@ class CharacterLauncher:
                 text="Open",
                 command=lambda character_name=name: self.open_custom_assets_folder(character_name),
                 bd=0,
-                bg="#2b2b2b",
+                bg=self.BUTTON_COLOR,
                 fg="white",
-                activebackground="#444444",
+                activebackground=self.BUTTON_HOVER_COLOR,
                 activeforeground="white",
                 width=5,
             )
@@ -1756,7 +2092,7 @@ class CharacterLauncher:
         else:
             image_frame.configure(
                 highlightthickness=2 if is_selected else 1,
-                highlightbackground="#2f80ed" if is_selected else "#cccccc",
+                highlightbackground=self.ACCENT_COLOR if is_selected else "#b8b8b8",
             )
 
         overlay = card.get("overlay")
@@ -1899,13 +2235,13 @@ class CharacterLauncher:
 
     def delete_selected_characters(self):
         if not self.selected:
-            messagebox.showwarning("Warning", "No character selected!")
+            messagebox.showwarning("Warning", "No prop selected!")
             return
 
         total = len(self.selected)
         confirm = messagebox.askyesno(
             "Confirm",
-            f"Do you want to move {total} character(s) to the Recycle Bin?",
+            f"Do you want to move {total} prop(s) to the Recycle Bin?",
         )
 
         if not confirm:
@@ -1918,7 +2254,7 @@ class CharacterLauncher:
             self.selected.clear()
             self.image_cache.clear()
 
-            messagebox.showinfo("Success", "Characters moved to the Recycle Bin!")
+            messagebox.showinfo("Success", "Props moved to the Recycle Bin!")
             self.refresh_characters()
 
         except Exception as error:
