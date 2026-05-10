@@ -1,4 +1,4 @@
-<img width="1024" height="1024" alt="SCM_Logo" src="https://github.com/user-attachments/assets/8393facb-aee2-4227-b602-ed900be1f607" />
+<img width="2048" height="2048" alt="LOGO" src="https://github.com/user-attachments/assets/964c9436-0bb3-4a3b-8919-ba6f94c1a205" />
 
 # SCM - SoE Character Manager
 
