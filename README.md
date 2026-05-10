@@ -1,6 +1,6 @@
 <img width="2048" height="2048" alt="LOGO" src="https://github.com/user-attachments/assets/964c9436-0bb3-4a3b-8919-ba6f94c1a205" />
 
-# SCM - SoE Character Manager
+# WLPM - WildLife Prop Manager
 
 A small Windows launcher for installing and managing WildLife character saves.
 
