@@ -39,7 +39,7 @@ python -m PyInstaller ^
     --clean ^
     --windowed ^
     --onedir ^
-    --name "Soe Character Launcher" ^
+    --name "WildLife Prop Manager" ^
     --icon "ICO\app.ico" ^
     %ADD_DATA_ARGS% ^
     --collect-all customtkinter ^
@@ -56,6 +56,6 @@ if errorlevel 1 (
 echo.
 echo Pronto!
 echo O executavel ficou em:
-echo dist\Soe Character Launcher\Soe Character Launcher.exe
+echo dist\WildLife Prop Manager\WildLife Prop Manager.exe
 echo.
 pause
