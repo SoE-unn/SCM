@@ -1,4 +1,4 @@
-<img width="2048" height="2048" alt="LOGO" src="https://github.com/user-attachments/assets/964c9436-0bb3-4a3b-8919-ba6f94c1a205" />
+<img width="3698" height="2048" alt="LOGO2" src="https://github.com/user-attachments/assets/34c14f09-b11a-4892-91be-1233e7964846" />
 
 # WLPM - WildLife Prop Manager
 
