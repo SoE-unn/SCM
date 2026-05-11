@@ -97,6 +97,13 @@ def apply_base_path(base_path):
 
 apply_base_path(load_saved_base_path())
 
+
+class SceneSaveNotSupportedError(Exception):
+    def __init__(self, level):
+        self.level = level
+        super().__init__(level)
+
+
 if CTK_AVAILABLE:
     ctk.set_appearance_mode("dark")
     ctk.set_default_color_theme("dark-blue")
@@ -174,6 +181,18 @@ def show_startup_error_window(log_file):
 class CharacterLauncher:
     WINDOW_WIDTH = 1415
     WINDOW_HEIGHT = 800
+    SCENE_LEVELS = {
+        "showroom": "Showroom",
+        "oldwildlifemap": "OldWildLifeMap",
+        "newwildlifemap": "NewWildLifeMap",
+        "fishervillage": "FisherVillage",
+    }
+    MAP_SAVE_FOLDERS = (
+        "Showroom",
+        "OldWildLifeMap",
+        "NewWildLifeMap",
+        "FisherVillage",
+    )
     PREVIEW_SIZE = 150
     GRID_COLUMNS = 7
     CARD_PAD_X = 13
@@ -1013,6 +1032,45 @@ class CharacterLauncher:
 
         return archive_path
 
+    def read_archive_json(self, archive, member):
+        with archive.open(member) as source_file:
+            content = source_file.read().decode("utf-8-sig")
+
+        return json.loads(content)
+
+    def detect_scene_save_level(self, archive, members, root_folder):
+        for member, archive_path in members:
+            relative_path = self.get_relative_archive_path(archive_path, root_folder)
+
+            if not relative_path or len(relative_path.parts) != 1:
+                continue
+
+            filename = relative_path.name
+            filename_lower = filename.casefold()
+
+            if not filename_lower.endswith(".json") or self.is_hairfix_manifest(filename):
+                continue
+
+            try:
+                save_data = self.read_archive_json(archive, member)
+            except Exception:
+                continue
+
+            if not isinstance(save_data, dict):
+                continue
+
+            level = save_data.get("level")
+
+            if not isinstance(level, str):
+                continue
+
+            scene_level = self.SCENE_LEVELS.get(level.strip().casefold())
+
+            if scene_level:
+                return scene_level
+
+        return None
+
     def get_wlsave_destination(self, relative_path, install_name):
         if not relative_path or not relative_path.parts:
             return None
@@ -1073,6 +1131,10 @@ class CharacterLauncher:
                 archive_paths.append(archive_path)
 
             root_folder = self.get_archive_root_folder(archive_paths)
+            scene_level = self.detect_scene_save_level(archive, members, root_folder)
+
+            if scene_level:
+                raise SceneSaveNotSupportedError(scene_level)
 
             for member, archive_path in members:
                 relative_path = self.get_relative_archive_path(archive_path, root_folder)
@@ -1120,6 +1182,15 @@ class CharacterLauncher:
                 ),
             )
 
+        except SceneSaveNotSupportedError as error:
+            messagebox.showwarning(
+                "Scene save not supported",
+                (
+                    "Scene saves are not supported.\n\n"
+                    f"This .wlsave appears to be a scene/map save for: {error.level}\n\n"
+                    "Please install only character .wlsave or Props.wlsave files."
+                ),
+            )
         except zipfile.BadZipFile:
             messagebox.showerror("Error", "This .wlsave file could not be opened as a valid package.")
         except Exception as error:
@@ -1176,17 +1247,34 @@ class CharacterLauncher:
         return characters
 
     def get_collection_names(self):
+        if not self.save_folder_exists():
+            return set()
+
+        return self.get_save_file_names_from_folder(COLLECTIONS_PATH)
+
+    def get_save_file_names_from_folder(self, folder_path):
         names = set()
 
-        if not self.save_folder_exists() or not COLLECTIONS_PATH.exists():
+        if not folder_path.exists() or not folder_path.is_dir():
             return names
 
-        for file_path in COLLECTIONS_PATH.iterdir():
+        for file_path in folder_path.rglob("*"):
             if self.is_hairfix_manifest(file_path):
                 continue
 
             if file_path.is_file() and file_path.suffix.casefold() in {".json", ".png"}:
                 names.add(file_path.stem)
+
+        return names
+
+    def get_map_save_names(self):
+        names = set()
+
+        if not self.save_folder_exists():
+            return names
+
+        for folder_name in self.MAP_SAVE_FOLDERS:
+            names.update(self.get_save_file_names_from_folder(BASE_PATH / folder_name))
 
         return names
 
@@ -2266,9 +2354,11 @@ class CharacterLauncher:
             return
 
         collection_names = self.get_collection_names()
+        map_save_names = self.get_map_save_names()
         asset_names = self.get_customasset_names()
+        protected_names = collection_names | map_save_names
 
-        asset_only = sorted(asset_names - collection_names, key=str.lower)
+        asset_only = sorted(asset_names - protected_names, key=str.lower)
 
         if not asset_only:
             messagebox.showinfo("Checkup complete", "No orphan CustomAssets folders found.")
@@ -2277,7 +2367,7 @@ class CharacterLauncher:
         message = (
             "Orphan CustomAssets folders were found.\n\n"
             f"CustomAssets folders to delete: {len(asset_only)}\n\n"
-            "Collections files will not be deleted.\n\n"
+            "Collections and map save files will be preserved.\n\n"
             "Do you want to permanently delete these CustomAssets folders?"
         )
 
@@ -2305,7 +2395,7 @@ class CharacterLauncher:
                 "Cleanup complete",
                 (
                     "Orphan CustomAssets folders removed!\n\n"
-                    "Collections files were preserved.\n"
+                    "Collections and map save files were preserved.\n"
                     f"Folders removed from CustomAssets: {deleted_asset_folders}"
                 ),
             )
