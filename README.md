@@ -2,14 +2,14 @@
 
 # WLPM - WildLife Prop Manager
 
-A small Windows launcher for installing and managing WildLife character saves.
+A small Windows launcher for installing and managing WildLife Props saves.
 
 ## Features
 
 - Install `.wlsave` files manually or by drag and drop
-- View character previews
+- View Props previews
 - Search and sort characters
-- Delete characters to the Recycle Bin
+- Delete Props to the Recycle Bin
 - Clear orphan CustomAssets folders
 - Custom icons and dark UI
 
