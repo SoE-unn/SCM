@@ -6,12 +6,14 @@ A small Windows launcher for installing and managing WildLife Props saves.
 
 ## Features
 
-- Install `.wlsave` files manually or by drag and drop
+- Install `.wlsave`Characters/Props files manually or by drag and drop
 - View Props previews
 - Search and sort characters
 - Delete Props to the Recycle Bin
+- Open scene CustomAssets folders when available
 - Clear orphan CustomAssets folders
 - Custom icons and dark UI
+- Blocks unsupported Scenes saves
 
 ## Build
 
