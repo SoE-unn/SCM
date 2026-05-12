@@ -193,6 +193,7 @@ class CharacterLauncher:
         "NewWildLifeMap",
         "FisherVillage",
     )
+    MAP_SAVE_PARENT_FOLDER = "MySaves"
     PREVIEW_SIZE = 150
     GRID_COLUMNS = 7
     CARD_PAD_X = 13
@@ -1274,6 +1275,9 @@ class CharacterLauncher:
             return names
 
         for folder_name in self.MAP_SAVE_FOLDERS:
+            names.update(
+                self.get_save_file_names_from_folder(BASE_PATH / self.MAP_SAVE_PARENT_FOLDER / folder_name)
+            )
             names.update(self.get_save_file_names_from_folder(BASE_PATH / folder_name))
 
         return names
